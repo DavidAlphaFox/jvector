@@ -42,7 +42,11 @@ import java.util.stream.IntStream;
  * Tests GraphIndexes against vectors from various datasets
  */
 public class Bench {
-    private static void testRecall(int M, int efConstruction, List<Boolean> diskOptions, List<Integer> efSearchOptions, DataSet ds, CompressedVectors cv, Path testDirectory) throws IOException {
+    private enum GraphType {
+        MEMORY_EXACT, DISK_SORTED, DISK_APPROXIMATE
+    }
+
+    private static void testRecall(int M, int efConstruction, List<GraphType> graphOptions, List<Integer> efSearchOptions, DataSet ds, CompressedVectors cv, Path testDirectory) throws IOException {
         var floatVectors = new ListRandomAccessVectorValues(ds.baseVectors, ds.baseVectors.get(0).length);
         var topK = ds.groundTruth.get(0).size();
 
@@ -61,12 +65,12 @@ public class Bench {
 
             int queryRuns = 10;
             for (int overquery : efSearchOptions) {
-                for (boolean useDisk : diskOptions) {
+                for (var graphType : graphOptions) {
                     start = System.nanoTime();
-                    var pqr = performQueries(ds, floatVectors, useDisk ? cv : null, useDisk ? onDiskGraph : onHeapGraph, topK, topK * overquery, queryRuns);
+                    var pqr = performQueries(ds, floatVectors, graphType, graphType == GraphType.MEMORY_EXACT ? null : cv, graphType == GraphType.MEMORY_EXACT ? onHeapGraph : onDiskGraph, topK, topK * overquery, queryRuns);
                     var recall = ((double) pqr.topKFound) / (queryRuns * ds.queryVectors.size() * topK);
-                    System.out.format("Index   M=%d ef=%d PQ=%b: top %d/%d recall %.4f, build %.2fs, query %.2fs. %s nodes visited%n",
-                            M, efConstruction, useDisk, topK, overquery, recall, buildNanos / 1_000_000_000.0, (System.nanoTime() - start) / 1_000_000_000.0, pqr.nodesVisited);
+                    System.out.format("Index   M=%d ef=%d Type=%s: top %d/%d recall %.4f, build %.2fs, query %.2fs. %s nodes visited%n",
+                            M, efConstruction, graphType, topK, overquery, recall, buildNanos / 1_000_000_000.0, (System.nanoTime() - start) / 1_000_000_000.0, pqr.nodesVisited);
                 }
             }
         }
@@ -100,7 +104,7 @@ public class Bench {
         return topKCorrect(topK, a, gt);
     }
 
-    private static ResultSummary performQueries(DataSet ds, RandomAccessVectorValues<float[]> exactVv, CompressedVectors cv, GraphIndex<float[]> index, int topK, int efSearch, int queryRuns) {
+    private static ResultSummary performQueries(DataSet ds, RandomAccessVectorValues<float[]> exactVv, GraphType graphType, CompressedVectors cv, GraphIndex<float[]> index, int topK, int efSearch, int queryRuns) {
         assert efSearch >= topK;
         LongAdder topKfound = new LongAdder();
         LongAdder nodesVisited = new LongAdder();
@@ -108,14 +112,21 @@ public class Bench {
             IntStream.range(0, ds.queryVectors.size()).parallel().forEach(i -> {
                 var queryVector = ds.queryVectors.get(i);
                 SearchResult sr;
-                if (cv != null) {
+                if (graphType == GraphType.DISK_SORTED) {
                     var view = index.getView();
                     NeighborSimilarity.ApproximateScoreFunction sf = (other) -> cv.decodedSimilarity(other, queryVector, ds.similarityFunction);
                     NeighborSimilarity.ReRanker<float[]> rr = (j, vectors) -> ds.similarityFunction.compare(queryVector, vectors.get(j));
                     sr = new GraphSearcher.Builder(view)
                             .build()
                             .search(sf, rr, efSearch, null);
-                } else {
+                } else if (graphType == GraphType.DISK_APPROXIMATE) {
+                    var view = index.getView();
+                    NeighborSimilarity.ApproximateScoreFunction sf = (other) -> cv.decodedSimilarity(other, queryVector, ds.similarityFunction);
+                    sr = new GraphSearcher.Builder(view)
+                            .build()
+                            .search(sf, null, efSearch, null);
+                }
+                else {
                     sr = GraphSearcher.search(queryVector, efSearch, exactVv, VectorEncoding.FLOAT32, ds.similarityFunction, index, null);
                 }
 
@@ -221,27 +232,27 @@ public class Bench {
                 "hdf5/glove-100-angular.hdf5",
                 "hdf5/glove-200-angular.hdf5",
                 "hdf5/sift-128-euclidean.hdf5");
-        var mGrid = List.of(8, 12, 16, 24, 32, 48, 64);
-        var efConstructionGrid = List.of(60, 80, 100, 120, 160, 200, 400, 600, 800);
-        var efSearchFactor = List.of(1, 2, 4);
-        var diskOptions = List.of(false, true);
+        var mGrid = List.of(16);
+        var efConstructionGrid = List.of(100);
+        var efSearchFactor = List.of(1, 2);
+        var graphOptions = List.of(GraphType.MEMORY_EXACT, GraphType.DISK_APPROXIMATE, GraphType.DISK_SORTED);
         // large files not yet supported
 //                "hdf5/deep-image-96-angular.hdf5",
 //                "hdf5/gist-960-euclidean.hdf5");
         for (var f : files) {
-            gridSearch(f, mGrid, efConstructionGrid, diskOptions, efSearchFactor);
+            gridSearch(f, mGrid, efConstructionGrid, graphOptions, efSearchFactor);
         }
 
         // tiny dataset, don't waste time building a huge index
-        files = List.of("hdf5/fashion-mnist-784-euclidean.hdf5");
+        /*files = List.of("hdf5/fashion-mnist-784-euclidean.hdf5");
         mGrid = List.of(8, 12, 16, 24);
         efConstructionGrid = List.of(40, 60, 80, 100, 120, 160);
         for (var f : files) {
-            gridSearch(f, mGrid, efConstructionGrid, diskOptions, efSearchFactor);
-        }
+            gridSearch(f, mGrid, efConstructionGrid, graphOptions, efSearchFactor);
+        }*/
     }
 
-    private static void gridSearch(String f, List<Integer> mGrid, List<Integer> efConstructionGrid, List<Boolean> diskOptions, List<Integer> efSearchFactor) throws IOException {
+    private static void gridSearch(String f, List<Integer> mGrid, List<Integer> efConstructionGrid, List<GraphType> graphOptions, List<Integer> efSearchFactor) throws IOException {
         var ds = load(f);
 
         var start = System.nanoTime();
@@ -260,7 +271,7 @@ public class Bench {
         try {
             for (int M : mGrid) {
                 for (int beamWidth : efConstructionGrid) {
-                    testRecall(M, beamWidth, diskOptions, efSearchFactor, ds, compressedVectors, testDirectory);
+                    testRecall(M, beamWidth, graphOptions, efSearchFactor, ds, compressedVectors, testDirectory);
                 }
             }
         } finally {

@@ -116,8 +116,9 @@ public class GraphSearcher<T> {
       int ep,
       Bits acceptOrds)
   {
-    if (!scoreFunction.isExact() && reRanker == null) {
-      throw new IllegalArgumentException("Either scoreFunction must be exact, or reRanker must not be null");
+    var rerank = false;
+    if (!scoreFunction.isExact() && reRanker != null) {
+      rerank = true;
     }
 
     if (ep < 0) {
@@ -126,7 +127,7 @@ public class GraphSearcher<T> {
 
     prepareScratchState(view.size());
     var resultsQueue = new NeighborQueue(topK, false);
-    Map<Integer, T> vectorsEncountered = !scoreFunction.isExact() ? new java.util.HashMap<>() : null;
+    Map<Integer, T> vectorsEncountered = rerank ? new java.util.HashMap<>() : null;
     int numVisited = 0;
 
     float score = scoreFunction.similarityTo(ep);
@@ -153,7 +154,7 @@ public class GraphSearcher<T> {
       // TODO should we merge getVector and getNeighborsIterator into a single method to
       // be more aligned with how it works under the hood?
       int topCandidateNode = candidates.pop();
-      if (!scoreFunction.isExact()) {
+      if (rerank) {
         vectorsEncountered.put(topCandidateNode, view.getVector(topCandidateNode));
       }
       for (var it = view.getNeighborsIterator(topCandidateNode); it.hasNext(); ) {
@@ -177,7 +178,7 @@ public class GraphSearcher<T> {
     assert resultsQueue.size() <= topK;
 
     SearchResult.NodeScore[] nodes;
-    if (scoreFunction.isExact()) {
+    if (scoreFunction.isExact() || !rerank) {
       nodes = new SearchResult.NodeScore[resultsQueue.size()];
       for (int i = nodes.length - 1; i >= 0; i--) {
           var nScore = resultsQueue.topScore();
