@@ -34,6 +34,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -48,7 +49,14 @@ public class Bench {
 
         var start = System.nanoTime();
         var builder = new GraphIndexBuilder<>(floatVectors, VectorEncoding.FLOAT32, ds.similarityFunction, M, efConstruction, 1.2f, 1.4f);
-        var onHeapGraph = builder.build();
+        var pool = new ForkJoinPool(16);
+        pool.submit(() -> {
+            IntStream.range(0, floatVectors.size()).parallel().forEach(k -> {
+                builder.addGraphNode(k, floatVectors);
+            });
+            builder.complete();
+        }).join();
+        var onHeapGraph = builder.getGraph();
         var avgShortEdges = IntStream.range(0, onHeapGraph.size()).mapToDouble(i -> onHeapGraph.getNeighbors(i).getShortEdges()).average().orElseThrow();
         System.out.format("Build M=%d ef=%d in %.2fs with %.2f short edges%n",
                 M, efConstruction, (System.nanoTime() - start) / 1_000_000_000.0, avgShortEdges);
@@ -241,12 +249,12 @@ public class Bench {
     public static void main(String[] args) throws IOException {
         System.out.println("Heap space available is " + Runtime.getRuntime().maxMemory());
         var files = List.of(
-                "../hdf5/nytimes-256-angular.hdf5",
-                "../hdf5/glove-100-angular.hdf5",
-                "../hdf5/glove-200-angular.hdf5",
-                "../hdf5/sift-128-euclidean.hdf5");
-        var mGrid = List.of(8, 12, 16, 24, 32, 48, 64);
-        var efConstructionGrid = List.of(60, 80, 100, 120, 160, 200, 400, 600, 800);
+//                "../hdf5/nytimes-256-angular.hdf5",
+//                "../hdf5/glove-100-angular.hdf5",
+//                "../hdf5/glove-200-angular.hdf5",
+                "hdf5/sift-128-euclidean.hdf5");
+        var mGrid = List.of(24, 32, 48);
+        var efConstructionGrid = List.of(200, 400);
         var efSearchFactor = List.of(1, 2);
         var diskOptions = List.of(false, true);
         // large files not yet supported
