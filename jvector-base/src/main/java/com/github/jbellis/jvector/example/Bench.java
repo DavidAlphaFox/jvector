@@ -256,7 +256,7 @@ public class Bench {
         var mGrid = List.of(24, 32, 48);
         var efConstructionGrid = List.of(200, 400);
         var efSearchFactor = List.of(1, 2);
-        var diskOptions = List.of(false, true);
+        var diskOptions = List.of(false);
         // large files not yet supported
 //                "hdf5/deep-image-96-angular.hdf5",
 //                "hdf5/gist-960-euclidean.hdf5");
