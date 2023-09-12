@@ -276,16 +276,21 @@ public class Bench {
     private static void gridSearch(String f, List<Integer> mGrid, List<Integer> efConstructionGrid, List<Boolean> diskOptions, List<Integer> efSearchFactor) throws IOException {
         var ds = load(f);
 
-        var start = System.nanoTime();
-        var pqDims = ds.baseVectors.get(0).length / 2;
-        ProductQuantization pq = new ProductQuantization(ds.baseVectors, pqDims, ds.similarityFunction == VectorSimilarityFunction.EUCLIDEAN);
-        System.out.format("PQ@%s build %.2fs,%n", pqDims, (System.nanoTime() - start) / 1_000_000_000.0);
+        CompressedVectors compressedVectors;
+        if (diskOptions.contains(true)) {
+            var start = System.nanoTime();
+            var pqDims = ds.baseVectors.get(0).length / 2;
+            ProductQuantization pq = new ProductQuantization(ds.baseVectors, pqDims, ds.similarityFunction == VectorSimilarityFunction.EUCLIDEAN);
+            System.out.format("PQ@%s build %.2fs,%n", pqDims, (System.nanoTime() - start) / 1_000_000_000.0);
 
-        start = System.nanoTime();
-        var quantizedVectors = pq.encodeAll(ds.baseVectors);
-        System.out.format("PQ encode %.2fs,%n", (System.nanoTime() - start) / 1_000_000_000.0);
+            start = System.nanoTime();
+            var quantizedVectors = pq.encodeAll(ds.baseVectors);
+            System.out.format("PQ encode %.2fs,%n", (System.nanoTime() - start) / 1_000_000_000.0);
 
-        var compressedVectors = new CompressedVectors(pq, quantizedVectors);
+            compressedVectors = new CompressedVectors(pq, quantizedVectors);
+        } else {
+            compressedVectors = null;
+        }
 
         var testDirectory = Files.createTempDirectory("BenchGraphDir");
 
