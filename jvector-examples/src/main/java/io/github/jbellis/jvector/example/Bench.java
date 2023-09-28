@@ -66,7 +66,7 @@ public class Bench {
             for (int overquery : efSearchOptions) {
                 for (boolean useDisk : diskOptions) {
                     start = System.nanoTime();
-                    var pqr = performQueries(ds, floatVectors, useDisk ? cv : null, useDisk ? onDiskGraph : onHeapGraph, topK, topK * overquery, queryRuns);
+                    var pqr = performQueries(ds, floatVectors, useDisk ? cv : null, onDiskGraph, topK, topK * overquery, queryRuns);
                     var recall = ((double) pqr.topKFound) / (queryRuns * ds.queryVectors.size() * topK);
                     System.out.format("  Query PQ=%b top %d/%d recall %.4f in %.2fs after %s nodes visited%n",
                             useDisk, topK, overquery, recall, (System.nanoTime() - start) / 1_000_000_000.0, pqr.nodesVisited);
@@ -119,7 +119,12 @@ public class Bench {
                             .build()
                             .search(sf, rr, efSearch, null);
                 } else {
-                    sr = GraphSearcher.search(queryVector, efSearch, exactVv, VectorEncoding.FLOAT32, ds.similarityFunction, index, null);
+                    var view = index.getView();
+                    var viewCopy = index.getView(); // calling getVector will mess up the state in search()
+                    NeighborSimilarity.ExactScoreFunction sf = j -> ds.similarityFunction.compare(queryVector, viewCopy.getVector(j));
+                    sr = new GraphSearcher.Builder<>(view)
+                            .build()
+                            .search(sf, null, efSearch, null);
                 }
 
                 var gt = ds.groundTruth.get(i);
